@@ -1,6 +1,7 @@
-import { onRequest as uploadImage } from "../functions/upload.js";
 import { onRequestGet as proxyCachedImage } from "../functions/v2/[vkey].js";
 import { onRequestGet as proxyImgurImage } from "../functions/vh-img-proxy/[vkey].js";
+
+const MAX_IMAGE_SIZE = 15 * 1024 * 1024;
 
 const jsonResponse = (payload, status = 200) =>
   new Response(JSON.stringify(payload), {
@@ -172,48 +173,96 @@ const importGallery = async (request, env) => {
   }
 };
 
-const recordUpload = async (request, env) => {
-  let file = null;
+const uploadToR2 = async (request, env) => {
+  if (!env.IMAGE_BUCKET) return jsonResponse({ success: false, error: "图片存储暂不可用" }, 503);
+
+  let formData;
   try {
-    file = (await request.clone().formData()).get("file");
+    formData = await request.formData();
   } catch {
-    // The existing upload handler will return the appropriate request error.
+    return jsonResponse({ success: false, error: "上传数据格式不正确" }, 400);
   }
 
-  const response = await uploadImage({ request });
-  if (!response.ok || !env.GALLERY_DB || !file || typeof file === "string") {
-    return response;
+  const file = formData.get("file");
+  if (!file || typeof file === "string" || !file.type?.startsWith("image/")) {
+    return jsonResponse({ success: false, error: "请选择有效图片" }, 400);
   }
+  if (file.size <= 0 || file.size > MAX_IMAGE_SIZE) {
+    return jsonResponse({ success: false, error: "图片大小不能超过 15 MB" }, 413);
+  }
+
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  const filename = String(file.name || id)
+    .replace(/[\u0000-\u001f]/g, "")
+    .slice(0, 255) || id;
+  const uploadedAt = new Date();
+  const link = new URL("/v2/" + id, request.url).toString();
 
   try {
-    const result = await response.clone().json();
-    const image = normalizeImage({
-      data: result?.data,
-      filename: file.name,
-      mime_type: file.type,
-      size: file.size,
+    await env.IMAGE_BUCKET.put(id, file, {
+      httpMetadata: {
+        contentType: file.type,
+        cacheControl: "public, max-age=31536000, immutable",
+      },
+      customMetadata: { filename },
     });
+  } catch (error) {
+    console.error("R2 image upload failed", error);
+    return jsonResponse({ success: false, error: "图片保存失败，请稍后重试" }, 502);
+  }
 
-    if (result?.success && image) {
+  if (env.GALLERY_DB) {
+    try {
       await env.GALLERY_DB.prepare(
         "INSERT OR IGNORE INTO gallery_images (imgur_id, filename, link, mime_type, size, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
-        .bind(
-          image.imgur_id,
-          image.filename,
-          image.link,
-          image.mime_type,
-          image.size,
-          image.uploaded_at,
-        )
+        .bind(id, filename, link, file.type, file.size, uploadedAt.toISOString())
         .run();
+    } catch (error) {
+      console.error("Saving R2 image metadata to gallery failed", error);
     }
-  } catch (error) {
-    // Do not turn a successful Imgur upload into an apparent upload failure.
-    console.error("Saving uploaded image to gallery failed", error);
   }
 
-  return response;
+  return jsonResponse({
+    success: true,
+    status: 200,
+    data: {
+      id,
+      link,
+      type: file.type,
+      size: file.size,
+      datetime: Math.floor(uploadedAt.getTime() / 1000),
+    },
+  });
+};
+
+const getImage = async (request, env, pathname) => {
+  if (request.method !== "GET") return methodNotAllowed("GET");
+  const key = pathname.slice("/v2/".length);
+
+  if (env.IMAGE_BUCKET && /^[A-Za-z0-9._-]{1,128}$/.test(key)) {
+    try {
+      const object = await env.IMAGE_BUCKET.get(key);
+      if (object) {
+        const headers = new Headers();
+        object.writeHttpMetadata(headers);
+        headers.set("ETag", object.httpEtag);
+        headers.set("Cache-Control", object.httpMetadata?.cacheControl || "public, max-age=3600");
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
+        headers.set("Access-Control-Allow-Origin", "*");
+        return new Response(object.body, { headers });
+      }
+    } catch (error) {
+      console.error("R2 image read failed", error);
+      return jsonResponse({ error: "读取图片失败" }, 502);
+    }
+  }
+
+  // Old image links still resolve through the original Imgur proxy.
+  return proxyCachedImage({ request });
 };
 
 export default {
@@ -222,7 +271,7 @@ export default {
 
     if (pathname === "/upload") {
       return request.method === "POST"
-        ? recordUpload(request, env)
+        ? uploadToR2(request, env)
         : methodNotAllowed("POST");
     }
 
@@ -235,9 +284,7 @@ export default {
     }
 
     if (pathname.startsWith("/v2/")) {
-      return request.method === "GET"
-        ? proxyCachedImage({ request })
-        : methodNotAllowed("GET");
+      return getImage(request, env, pathname);
     }
 
     if (pathname.startsWith("/vh-img-proxy/")) {
