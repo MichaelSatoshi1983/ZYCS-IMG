@@ -110,7 +110,7 @@ const listGallery = async (request, env) => {
       "SELECT COUNT(*) AS total FROM gallery_images",
     ).first();
     const rows = await env.GALLERY_DB.prepare(
-      "SELECT imgur_id, filename, link, mime_type, size, uploaded_at FROM gallery_images ORDER BY uploaded_at DESC, imgur_id DESC LIMIT ? OFFSET ?",
+      "SELECT imgur_id, filename, link, mime_type, size, uploaded_at, storage FROM gallery_images ORDER BY uploaded_at DESC, imgur_id DESC LIMIT ? OFFSET ?",
     )
       .bind(limit, offset)
       .all();
@@ -173,6 +173,71 @@ const importGallery = async (request, env) => {
   }
 };
 
+const deleteGalleryImage = async (request, env) => {
+  if (request.method !== "POST") return methodNotAllowed("POST");
+  const unavailable = galleryUnavailable(env);
+  if (unavailable) return unavailable;
+  if (!env.IMAGE_BUCKET) return jsonResponse({ error: "图片存储暂不可用" }, 503);
+  if (!(await isAdmin(request, env))) return jsonResponse({ error: "管理员口令不正确" }, 401);
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse({ error: "删除请求格式不正确" }, 400);
+  }
+
+  const imageId = String(payload?.image_id || "").trim();
+  if (!/^[A-Za-z0-9]{1,64}$/.test(imageId)) {
+    return jsonResponse({ error: "图片编号不正确" }, 400);
+  }
+
+  try {
+    const image = await env.GALLERY_DB.prepare(
+      "SELECT storage FROM gallery_images WHERE imgur_id = ?",
+    )
+      .bind(imageId)
+      .first();
+    if (!image) return jsonResponse({ error: "图片记录不存在" }, 404);
+
+    if (image.storage === "r2") {
+      if (!/^[a-f0-9]{32}$/.test(imageId)) {
+        return jsonResponse({ error: "R2 图片编号不正确" }, 400);
+      }
+      await env.IMAGE_BUCKET.delete(imageId);
+    } else if (image.storage === "imgur") {
+      const deleteHash = String(payload?.delete_hash || "").trim();
+      if (!/^[A-Za-z0-9_-]{20,128}$/.test(deleteHash)) {
+        return jsonResponse({ error: "当前浏览器没有这张 Imgur 图片的删除凭据" }, 422);
+      }
+
+      const imgurResponse = await fetch(
+        "https://api.imgur.com/3/image/" + encodeURIComponent(deleteHash),
+        {
+          method: "DELETE",
+          headers: { Authorization: "Client-ID 546c25a59c58ad7" },
+        },
+      );
+      const result = await imgurResponse.json().catch(() => ({}));
+      if (!imgurResponse.ok || result?.success !== true) {
+        return jsonResponse({ error: "Imgur 未确认删除，请检查本机保存的删除凭据" }, 502);
+      }
+    } else {
+      return jsonResponse({ error: "不支持删除此存储类型的图片" }, 409);
+    }
+
+    await env.GALLERY_DB.prepare(
+      "DELETE FROM gallery_images WHERE imgur_id = ?",
+    )
+      .bind(imageId)
+      .run();
+    return jsonResponse({ deleted: true, storage: image.storage });
+  } catch (error) {
+    console.error("Gallery image delete failed", error);
+    return jsonResponse({ error: "删除失败，请稍后重试" }, 500);
+  }
+};
+
 const uploadToR2 = async (request, env) => {
   if (!env.IMAGE_BUCKET) return jsonResponse({ success: false, error: "图片存储暂不可用" }, 503);
 
@@ -204,7 +269,7 @@ const uploadToR2 = async (request, env) => {
     await env.IMAGE_BUCKET.put(id, file, {
       httpMetadata: {
         contentType: file.type,
-        cacheControl: "public, max-age=31536000, immutable",
+        cacheControl: "public, max-age=300",
       },
       customMetadata: { filename },
     });
@@ -216,9 +281,9 @@ const uploadToR2 = async (request, env) => {
   if (env.GALLERY_DB) {
     try {
       await env.GALLERY_DB.prepare(
-        "INSERT OR IGNORE INTO gallery_images (imgur_id, filename, link, mime_type, size, uploaded_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO gallery_images (imgur_id, filename, link, mime_type, size, uploaded_at, storage) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
-        .bind(id, filename, link, file.type, file.size, uploadedAt.toISOString())
+        .bind(id, filename, link, file.type, file.size, uploadedAt.toISOString(), "r2")
         .run();
     } catch (error) {
       console.error("Saving R2 image metadata to gallery failed", error);
@@ -249,7 +314,7 @@ const getImage = async (request, env, pathname) => {
         const headers = new Headers();
         object.writeHttpMetadata(headers);
         headers.set("ETag", object.httpEtag);
-        headers.set("Cache-Control", object.httpMetadata?.cacheControl || "public, max-age=3600");
+        headers.set("Cache-Control", "public, max-age=300");
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("Content-Security-Policy", "default-src 'none'; sandbox");
         headers.set("Access-Control-Allow-Origin", "*");
@@ -261,7 +326,14 @@ const getImage = async (request, env, pathname) => {
     }
   }
 
-  // Old image links still resolve through the original Imgur proxy.
+  if (/^[a-f0-9]{32}$/.test(key)) {
+    return new Response("Not Found", {
+      status: 404,
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+
+  // Old non-R2 image links still resolve through the original Imgur proxy.
   return proxyCachedImage({ request });
 };
 
@@ -281,6 +353,10 @@ export default {
 
     if (pathname === "/api/gallery/import") {
       return importGallery(request, env);
+    }
+
+    if (pathname === "/api/gallery/delete") {
+      return deleteGalleryImage(request, env);
     }
 
     if (pathname.startsWith("/v2/")) {
