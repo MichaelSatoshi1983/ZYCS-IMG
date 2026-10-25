@@ -9,6 +9,12 @@
       "database_id": "8016ec91-a0b9-449d-9b2a-c093404a25b4"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "IMAGE_BUCKET",
+      "bucket_name": "cloudimg"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
