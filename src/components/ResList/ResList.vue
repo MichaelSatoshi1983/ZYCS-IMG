@@ -1,45 +1,68 @@
 <template>
   <section class="ResList">
-    <div class="item" v-for="(i, idx) in props.modelValue" :key="idx">
-      <img v-if="i.upload_blob" class="thumb" :src="i.upload_result ? i.upload_blob : LoadingImg" />
-      <div class="value" :class="{ active: !i.upload_result }">
-        <p><input :value="i.upload_result ? formatURL(props, i.upload_result) : ''" type="text" readonly @click="i.upload_result && copyCodeValue(formatURL(props, i.upload_result))" /> <span>URL</span></p>
-        <p><input :value="i.upload_result ? formatURL(props, i.upload_result, 'md') : ''" type="text" readonly @click="i.upload_result && copyCodeValue(formatURL(props, i.upload_result, 'md'))" /> <span>Markdown</span></p>
+    <article class="item" v-for="(i, idx) in props.modelValue" :key="idx">
+      <img
+        v-if="i.upload_blob"
+        class="thumb"
+        :src="i.upload_status === 'success' ? i.upload_blob : LoadingImg"
+        alt=""
+      />
+
+      <div class="result-content">
+        <template v-if="i.upload_status === 'success'">
+          <div class="row">
+            <span>URL</span>
+            <input
+              :value="formatURL(props, i.upload_result)"
+              type="text"
+              readonly
+              aria-label="图片链接，点击复制"
+              @click="copyCodeValue(formatURL(props, i.upload_result))"
+            />
+            <button type="button" @click="copyCodeValue(formatURL(props, i.upload_result))">复制</button>
+          </div>
+          <div class="row">
+            <span>Markdown</span>
+            <input
+              :value="formatURL(props, i.upload_result, 'md')"
+              type="text"
+              readonly
+              aria-label="Markdown 链接，点击复制"
+              @click="copyCodeValue(formatURL(props, i.upload_result, 'md'))"
+            />
+            <button type="button" @click="copyCodeValue(formatURL(props, i.upload_result, 'md'))">复制</button>
+          </div>
+        </template>
+        <p v-else-if="i.upload_status === 'uploading'" class="status">上传中…</p>
+        <p v-else-if="i.upload_status === 'error'" class="status">上传失败</p>
       </div>
-      <HoverCard v-if="i.upload_result" :open-delay="0" :close-delay="0">
-        <HoverCardTrigger as-child>
-          <QrcodeVue class="qrcode" :value="formatURL(props, i.upload_result)" :size="56" level="H" />
-        </HoverCardTrigger>
-        <HoverCardContent class="w-max h-max"><QrcodeVue class="qrcode scale" :value="formatURL(props, i.upload_result)" :size="666" level="H" /></HoverCardContent>
-      </HoverCard>
-    </div>
+    </article>
   </section>
 </template>
+
 <script setup lang="ts">
-import QrcodeVue from 'qrcode.vue';
 import { formatURL } from '@/utils/index';
 import { useToast } from '@/components/ui/toast/use-toast';
-const { toast } = useToast();
 import LoadingImg from '@/assets/images/loading.gif';
-const props = defineProps(['modelValue', 'nodeHost']);
-import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card';
 
-// 复制CODE
-const copyCodeValue = async (v: string) => {
-  let vhCopyStatus: any = false;
+const { toast } = useToast();
+const props = defineProps(['modelValue', 'nodeHost']);
+
+const copyCodeValue = async (value: string) => {
+  let copied = false;
   try {
-    await navigator.clipboard.writeText(v);
-    vhCopyStatus = true;
+    await navigator.clipboard.writeText(value);
+    copied = true;
   } catch {
-    const i = document.createElement('textarea');
-    i.value = v;
-    document.body.appendChild(i);
-    i.select();
-    vhCopyStatus = document.execCommand('copy');
-    document.body.removeChild(i);
-  } finally {
-    if (vhCopyStatus) toast({ title: 'Tips', description: '复制成功' });
+    const input = document.createElement('textarea');
+    input.value = value;
+    document.body.appendChild(input);
+    input.select();
+    copied = document.execCommand('copy');
+    document.body.removeChild(input);
   }
+
+  if (copied) toast({ title: '提示', description: '已复制' });
 };
 </script>
 
