@@ -1,5 +1,9 @@
 <template>
   <section class="Home">
+    <nav class="home-nav">
+      <RouterLink to="/gallery">图库管理</RouterLink>
+    </nav>
+
     <div class="intro">
       <h1>上传图片</h1>
       <p>支持常见图片格式，单张最大 15 MB。可点击选择、拖入或粘贴图片。</p>
@@ -11,7 +15,7 @@
       <span>{{ fileList.length }} 张图片</span>
       <div class="actions">
         <button type="button" :disabled="!copyableLinks" @click="copyAll">复制全部链接</button>
-        <button type="button" @click="fileList = []">清空列表</button>
+        <button type="button" @click="fileList = []">清空本页记录</button>
       </div>
     </section>
 
