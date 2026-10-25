@@ -1,7 +1,11 @@
 {
   "name": "zycs-img",
+  "main": "./worker/index.js",
   "compatibility_date": "2025-04-09",
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/upload", "/v2/*", "/vh-img-proxy/*"]
   }
 }
