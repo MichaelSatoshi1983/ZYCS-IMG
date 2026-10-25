@@ -101,6 +101,9 @@ const fileUpload = async (FileListArr: Array<any>) => {
         body: formData,
       });
       const result = await res.json();
+      if (!res.ok || result?.success === false) {
+        throw new Error(result?.error || '上传失败');
+      }
       i.upload_result = result;
       i.upload_result._vh_filename = i.name;
       i.upload_status = 'success';
