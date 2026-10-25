@@ -129,9 +129,29 @@ const importLocalHistory = async () => {
     return;
   }
 
+  const images = localItems
+    .filter((item: any) => item?.upload_status === 'success')
+    .map((item: any) => {
+      const data = item?.upload_result?.data || {};
+      return {
+        imgur_id: data.id,
+        link: data.link,
+        filename: item?.upload_result?._vh_filename || item?.name,
+        mime_type: data.type || item?.type,
+        size: data.size || item?.size,
+        datetime: data.datetime,
+      };
+    })
+    .filter((item: any) => item.imgur_id && item.link);
+
+  if (!images.length) {
+    sessionStorage.setItem(importKey, 'done');
+    return;
+  }
+
   const result = await requestJson('/api/gallery/import', {
     method: 'POST',
-    body: JSON.stringify({ images: localItems }),
+    body: JSON.stringify({ images }),
   });
   const count = Number(result.imported || 0);
   if (count > 0) importMessage.value = '已导入本机旧记录 ' + count + ' 条';
