@@ -2,10 +2,17 @@
   "name": "zycs-img",
   "main": "./worker/index.js",
   "compatibility_date": "2025-04-09",
+  "d1_databases": [
+    {
+      "binding": "GALLERY_DB",
+      "database_name": "zycs-img-gallery",
+      "database_id": "8016ec91-a0b9-449d-9b2a-c093404a25b4"
+    }
+  ],
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/upload", "/v2/*", "/vh-img-proxy/*"]
+    "run_worker_first": ["/upload", "/api/*", "/v2/*", "/vh-img-proxy/*"]
   }
 }
