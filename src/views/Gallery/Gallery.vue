@@ -7,7 +7,7 @@
 
     <header class="intro">
       <h1>图库管理</h1>
-      <p>云端保存的上传记录，可跨设备查看。此页面仅支持查看和复制。</p>
+      <p>云端保存的图片可跨设备查看。R2 图片可删除；旧 Imgur 图片需本机保留删除凭据。</p>
     </header>
 
     <form v-if="!authenticated" class="login" @submit.prevent="login">
@@ -40,7 +40,17 @@
           <div class="details">
             <p class="filename" :title="image.filename">{{ image.filename }}</p>
             <p class="meta">{{ formatBytes(image.size) }} · {{ formatDate(image.uploaded_at) }}</p>
-            <button type="button" @click="copyLink(image.link)">复制链接</button>
+            <div class="card-actions">
+              <button type="button" @click="copyLink(image.link)">复制链接</button>
+              <button
+                type="button"
+                class="delete-button"
+                :disabled="deletingId === image.imgur_id"
+                @click="deleteImage(image)"
+              >
+                {{ deletingId === image.imgur_id ? '删除中…' : '删除' }}
+              </button>
+            </div>
           </div>
         </article>
       </div>
@@ -65,6 +75,7 @@ import { onMounted, ref } from 'vue';
 
 interface GalleryImage {
   imgur_id: string;
+  storage: 'r2' | 'imgur';
   filename: string;
   link: string;
   mime_type: string | null;
@@ -83,6 +94,7 @@ const hasMore = ref(false);
 const loading = ref(false);
 const message = ref('');
 const importMessage = ref('');
+const deletingId = ref('');
 
 const logout = () => {
   sessionStorage.removeItem(tokenKey);
@@ -204,6 +216,61 @@ const formatBytes = (value: number) => {
 const formatDate = (value: string) => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString();
+};
+
+const findLocalDeleteHash = (imageId: string) => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('zychUpImageList') || '[]');
+    if (!Array.isArray(saved)) return '';
+    const item = saved.find((entry: any) => String(entry?.upload_result?.data?.id || '') === imageId);
+    return String(item?.upload_result?.data?.deletehash || '');
+  } catch {
+    return '';
+  }
+};
+
+const removeLocalHistoryRecord = (imageId: string) => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('zychUpImageList') || '[]');
+    if (!Array.isArray(saved)) return;
+    const remaining = saved.filter(
+      (entry: any) => String(entry?.upload_result?.data?.id || '') !== imageId,
+    );
+    localStorage.setItem('zychUpImageList', JSON.stringify(remaining));
+  } catch {
+    // The gallery deletion does not depend on local history storage.
+  }
+};
+
+const deleteImage = async (image: GalleryImage) => {
+  const deleteHash = image.storage === 'imgur' ? findLocalDeleteHash(image.imgur_id) : '';
+  if (image.storage === 'imgur' && !deleteHash) {
+    message.value = '本机未保存这张 Imgur 图片的删除凭据，无法远程删除。';
+    return;
+  }
+
+  const prompt =
+    image.storage === 'r2'
+      ? '删除后图片会从 R2 永久移除，确定删除吗？'
+      : '这会从 Imgur 永久删除图片，确定继续吗？';
+  if (!window.confirm(prompt)) return;
+
+  deletingId.value = image.imgur_id;
+  message.value = '';
+  try {
+    await requestJson('/api/gallery/delete', {
+      method: 'POST',
+      body: JSON.stringify({ image_id: image.imgur_id, delete_hash: deleteHash }),
+    });
+    images.value = images.value.filter((item) => item.imgur_id !== image.imgur_id);
+    total.value = Math.max(0, total.value - 1);
+    removeLocalHistoryRecord(image.imgur_id);
+    message.value = '图片已删除';
+  } catch (error) {
+    message.value = error instanceof Error ? error.message : '删除失败';
+  } finally {
+    deletingId.value = '';
+  }
 };
 
 const copyLink = async (value: string) => {
@@ -354,10 +421,28 @@ onMounted(() => {
     p {
       margin: 0;
     }
+  }
+
+  .card-actions {
+    display: flex;
+    gap: 0.4rem;
+    margin-top: 0.6rem;
 
     button {
-      width: 100%;
-      margin-top: 0.6rem;
+      flex: 1;
+      margin: 0;
+      padding: 0.4rem 0.25rem;
+      font-size: 0.8rem;
+    }
+
+    .delete-button {
+      color: #b91c1c;
+      border-color: #fecaca;
+      background: #fff;
+    }
+
+    .delete-button:hover:not(:disabled) {
+      background: #fef2f2;
     }
   }
 
