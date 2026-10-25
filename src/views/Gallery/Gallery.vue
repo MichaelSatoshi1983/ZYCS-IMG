@@ -2,7 +2,7 @@
   <section class="Gallery">
     <nav class="page-nav">
       <RouterLink to="/">返回上传</RouterLink>
-      <button v-if="authenticated" type="button" class="plain-button" @click="logout">退出</button>
+      <button type="button" class="plain-button" @click="logout">退出登录</button>
     </nav>
 
     <header class="intro">
@@ -10,21 +10,7 @@
       <p>云端保存的图片可跨设备查看。R2 图片可删除；旧 Imgur 图片需本机保留删除凭据。</p>
     </header>
 
-    <form v-if="!authenticated" class="login" @submit.prevent="login">
-      <label for="gallery-token">管理员口令</label>
-      <input
-        id="gallery-token"
-        v-model="loginToken"
-        type="password"
-        autocomplete="current-password"
-        placeholder="输入管理员口令"
-        required
-      />
-      <button type="submit" :disabled="loading">进入图库</button>
-      <p v-if="message" class="message error">{{ message }}</p>
-    </form>
-
-    <template v-else>
+    <template v-if="authenticated">
       <p v-if="importMessage" class="message">{{ importMessage }}</p>
       <div class="toolbar">
         <span>共 {{ total }} 张图片</span>
@@ -67,11 +53,14 @@
       </button>
       <p v-else-if="loading" class="empty">加载中…</p>
     </template>
+    <p v-else class="empty">正在确认登录…</p>
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { getAccessToken, getSupabase } from '@/utils/supabase';
 
 interface GalleryImage {
   imgur_id: string;
@@ -83,10 +72,8 @@ interface GalleryImage {
   uploaded_at: string;
 }
 
-const tokenKey = 'zycsGalleryAdminToken';
 const importKey = 'zycsGalleryHistoryImported';
-const token = ref('');
-const loginToken = ref('');
+const router = useRouter();
 const authenticated = ref(false);
 const images = ref<GalleryImage[]>([]);
 const total = ref(0);
@@ -96,28 +83,34 @@ const message = ref('');
 const importMessage = ref('');
 const deletingId = ref('');
 
-const logout = () => {
-  sessionStorage.removeItem(tokenKey);
-  token.value = '';
-  loginToken.value = '';
-  authenticated.value = false;
-  images.value = [];
-  total.value = 0;
-  hasMore.value = false;
-  importMessage.value = '';
+const logout = async () => {
+  const supabase = await getSupabase();
+  try {
+    await supabase.auth.signOut();
+  } finally {
+    sessionStorage.removeItem('zycsGalleryAdminToken');
+    sessionStorage.removeItem(importKey);
+    authenticated.value = false;
+    images.value = [];
+    total.value = 0;
+    hasMore.value = false;
+    importMessage.value = '';
+    await router.replace('/login');
+  }
 };
 
 const requestJson = async (path: string, options: RequestInit = {}) => {
   const headers = new Headers(options.headers || {});
-  headers.set('Authorization', 'Bearer ' + token.value);
+  headers.set('Authorization', 'Bearer ' + await getAccessToken());
   if (options.body) headers.set('Content-Type', 'application/json');
 
   const response = await fetch(path, { ...options, headers });
   const data = await response.json().catch(() => ({}));
 
-  if (response.status === 401) {
-    logout();
-    throw new Error('管理员口令不正确或已失效');
+  if (response.status === 401 || response.status === 403) {
+    const message = data.error || '此账号没有图床管理权限';
+    await logout();
+    throw new Error(message);
   }
   if (!response.ok) {
     throw new Error(data.error || '请求失败，请稍后重试');
@@ -191,14 +184,6 @@ const loadGallery = async (reset: boolean) => {
   } finally {
     loading.value = false;
   }
-};
-
-const login = async () => {
-  if (!loginToken.value.trim()) return;
-  token.value = loginToken.value.trim();
-  sessionStorage.setItem(tokenKey, token.value);
-  authenticated.value = true;
-  await loadGallery(true);
 };
 
 const formatBytes = (value: number) => {
@@ -289,9 +274,6 @@ const copyLink = async (value: string) => {
 };
 
 onMounted(() => {
-  const savedToken = sessionStorage.getItem(tokenKey);
-  if (!savedToken) return;
-  token.value = savedToken;
   authenticated.value = true;
   void loadGallery(true);
 });
@@ -331,25 +313,6 @@ onMounted(() => {
       color: #6b7280;
       font-size: 0.875rem;
       line-height: 1.5;
-    }
-  }
-
-  .login {
-    display: grid;
-    gap: 0.75rem;
-    width: min(100%, 24rem);
-
-    label {
-      font-size: 0.9rem;
-    }
-
-    input {
-      box-sizing: border-box;
-      width: 100%;
-      padding: 0.65rem 0.75rem;
-      border: 1px solid #d1d5db;
-      border-radius: 4px;
-      background: #fff;
     }
   }
 

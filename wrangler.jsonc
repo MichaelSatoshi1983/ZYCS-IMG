@@ -2,6 +2,10 @@
   "name": "zycs-img",
   "main": "./worker/index.js",
   "compatibility_date": "2025-04-09",
+  "vars": {
+    "SUPABASE_URL": "https://dlufuzrlbcdcahfuyzau.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_LU0uRgSVvnMENNSYKfkdUQ_Qe4-lTxW"
+  },
   "d1_databases": [
     {
       "binding": "GALLERY_DB",

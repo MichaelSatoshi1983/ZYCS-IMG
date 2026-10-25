@@ -5,7 +5,9 @@
 
   .home-nav {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
+    gap: 1rem;
     margin-bottom: 1rem;
 
     a {
@@ -67,6 +69,19 @@
     &:disabled {
       color: #9ca3af;
       cursor: not-allowed;
+    }
+  }
+
+  .home-nav button {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #475569;
+    font-size: 0.875rem;
+
+    &:hover:not(:disabled) {
+      color: #111827;
+      text-decoration: underline;
     }
   }
 }

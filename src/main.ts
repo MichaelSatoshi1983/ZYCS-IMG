@@ -7,6 +7,8 @@ import '@/assets/less/main.less'
 // tailwind-base
 import '@/assets/tailwind-base.css'
 
+sessionStorage.removeItem('zycsGalleryAdminToken')
+
 const app = createApp(App)
 
 app.use(router)

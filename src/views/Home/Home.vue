@@ -2,6 +2,7 @@
   <section class="Home">
     <nav class="home-nav">
       <RouterLink to="/gallery">图库管理</RouterLink>
+      <button type="button" @click="logout">退出登录</button>
     </nav>
 
     <div class="intro">
@@ -26,18 +27,30 @@
 <script setup lang="ts">
 import vh from 'vh-plugin';
 import { computed, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { formatURL } from '@/utils/index';
+import { getSupabase } from '@/utils/supabase';
 import Upload from '@/components/Upload/Upload.vue';
 import ResList from '@/components/ResList/ResList.vue';
 
 const nodeHost = ref<string>(import.meta.env.VITE_IMG_API_URL || location.origin);
-const uploadAPI = ref<string>(`${import.meta.env.VITE_IMG_API_URL || location.origin}/upload`);
+const uploadAPI = ref<string>(`${location.origin}/upload`);
 const UploadConfig = ref<any>({
   AcceptTypes: 'image/*',
   Max: 0,
   MaxSize: 15,
 });
 const fileList = ref<Array<any>>(JSON.parse(localStorage.getItem('zychUpImageList') || '[]'));
+const router = useRouter();
+
+const logout = async () => {
+  const supabase = await getSupabase();
+  try {
+    await supabase.auth.signOut();
+  } finally {
+    await router.replace('/login');
+  }
+};
 
 const copyableLinks = computed(() =>
   fileList.value

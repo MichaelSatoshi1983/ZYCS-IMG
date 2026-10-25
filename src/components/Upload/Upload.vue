@@ -19,6 +19,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useToast } from '@/components/ui/toast/use-toast';
+import { getAccessToken } from '@/utils/supabase';
 
 const { toast } = useToast();
 const props = defineProps(['modelValue', 'UploadConfig', 'uploadAPI']);
@@ -96,8 +97,10 @@ const fileUpload = async (FileListArr: Array<any>) => {
     emits('update:modelValue', [...FileListArr]);
 
     try {
+      const accessToken = await getAccessToken();
       const res = await fetch(props.uploadAPI, {
         method: 'POST',
+        headers: { Authorization: 'Bearer ' + accessToken },
         body: formData,
       });
       const result = await res.json();

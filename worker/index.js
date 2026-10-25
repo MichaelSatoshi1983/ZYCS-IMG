@@ -66,38 +66,133 @@ const normalizeImage = (record) => {
   };
 };
 
-const isAdmin = async (request, env) => {
-  const expectedHash = String(env.GALLERY_TOKEN_HASH || "").toLowerCase();
-  const authorization = request.headers.get("Authorization") || "";
-  const match = /^Bearer ([A-Za-z0-9_-]{8,200})$/.exec(authorization);
+const authConfigUnavailable = (env) =>
+  !env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY || !env.GALLERY_OWNER_EMAIL;
 
-  if (!/^[a-f0-9]{64}$/.test(expectedHash) || !match) return false;
-
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(match[1]),
-  );
-  const actualHash = Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-
-  let mismatch = 0;
-  for (let index = 0; index < 64; index += 1) {
-    mismatch |= actualHash.charCodeAt(index) ^ expectedHash.charCodeAt(index);
+const getAuthConfig = (request, env) => {
+  if (request.method !== "GET") return methodNotAllowed("GET");
+  if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) {
+    return jsonResponse({ error: "登录服务暂不可用" }, 503);
   }
-  return mismatch === 0;
+
+  return jsonResponse({
+    url: env.SUPABASE_URL,
+    publishableKey: env.SUPABASE_PUBLISHABLE_KEY,
+  });
+};
+
+const signUpOwner = async (request, env) => {
+  if (request.method !== "POST") return methodNotAllowed("POST");
+  if (authConfigUnavailable(env)) return jsonResponse({ error: "登录服务暂未配置" }, 503);
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return jsonResponse({ error: "注册信息格式不正确" }, 400);
+  }
+
+  const email = String(payload?.email || "").trim().toLowerCase();
+  const password = typeof payload?.password === "string" ? payload.password : "";
+  if (password.length < 8 || password.length > 128) {
+    return jsonResponse({ error: "密码长度需为 8 到 128 个字符" }, 400);
+  }
+
+  const ownerEmail = String(env.GALLERY_OWNER_EMAIL).trim().toLowerCase();
+  if (!email || email !== ownerEmail) {
+    return jsonResponse({ accepted: true }, 202);
+  }
+
+  try {
+    const supabaseResponse = await fetch(new URL("/auth/v1/signup", env.SUPABASE_URL), {
+      method: "POST",
+      headers: {
+        apikey: env.SUPABASE_PUBLISHABLE_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email, password }),
+    });
+    await supabaseResponse.arrayBuffer();
+
+    if (!supabaseResponse.ok) {
+      if (supabaseResponse.status >= 500) {
+        return jsonResponse({ error: "注册服务暂不可用，请稍后重试" }, 503);
+      }
+      // Keep existing-user and other Auth responses indistinguishable from unapproved emails.
+      return jsonResponse({ accepted: true }, 202);
+    }
+
+    return jsonResponse({ accepted: true }, 202);
+  } catch (error) {
+    console.error("Supabase owner signup failed", error);
+    return jsonResponse({ error: "注册服务暂不可用，请稍后重试" }, 503);
+  }
+};
+
+const authenticateOwner = async (request, env) => {
+  if (authConfigUnavailable(env)) {
+    return { ok: false, response: jsonResponse({ error: "登录服务暂未配置" }, 503) };
+  }
+
+  const authorization = request.headers.get("Authorization") || "";
+  const match = /^Bearer ([A-Za-z0-9._-]{20,4096})$/.exec(authorization);
+  if (!match) {
+    return { ok: false, response: jsonResponse({ error: "请先登录" }, 401) };
+  }
+
+  try {
+    const response = await fetch(new URL("/auth/v1/user", env.SUPABASE_URL), {
+      headers: {
+        apikey: env.SUPABASE_PUBLISHABLE_KEY,
+        Authorization: "Bearer " + match[1],
+      },
+    });
+    if (response.status === 401) {
+      return { ok: false, response: jsonResponse({ error: "登录已失效，请重新登录" }, 401) };
+    }
+    if (!response.ok) {
+      return { ok: false, response: jsonResponse({ error: "登录验证暂不可用" }, 503) };
+    }
+
+    const user = await response.json();
+    const ownerEmail = String(env.GALLERY_OWNER_EMAIL).trim().toLowerCase();
+    const userEmail = String(user?.email || "").trim().toLowerCase();
+
+    if (!user?.id || !userEmail) {
+      return { ok: false, response: jsonResponse({ error: "Supabase 用户信息无效" }, 401) };
+    }
+    if (!user.email_confirmed_at) {
+      return { ok: false, response: jsonResponse({ error: "请先完成邮箱验证" }, 403) };
+    }
+    if (userEmail !== ownerEmail) {
+      return { ok: false, response: jsonResponse({ error: "此账号没有图床管理权限" }, 403) };
+    }
+
+    return { ok: true, user: { id: user.id, email: user.email } };
+  } catch (error) {
+    console.error("Supabase user verification failed", error);
+    return { ok: false, response: jsonResponse({ error: "登录验证暂不可用" }, 503) };
+  }
+};
+
+const getCurrentOwner = async (request, env) => {
+  if (request.method !== "GET") return methodNotAllowed("GET");
+  const auth = await authenticateOwner(request, env);
+  if (!auth.ok) return auth.response;
+  return jsonResponse({ user: auth.user });
 };
 
 const galleryUnavailable = (env) =>
-  !env.GALLERY_DB || !env.GALLERY_TOKEN_HASH
-    ? jsonResponse({ error: "图库管理暂不可用" }, 503)
+  !env.GALLERY_DB || !env.IMAGE_BUCKET || authConfigUnavailable(env)
+    ? jsonResponse({ error: "图床管理暂不可用" }, 503)
     : null;
 
 const listGallery = async (request, env) => {
   if (request.method !== "GET") return methodNotAllowed("GET");
   const unavailable = galleryUnavailable(env);
   if (unavailable) return unavailable;
-  if (!(await isAdmin(request, env))) return jsonResponse({ error: "管理员口令不正确" }, 401);
+  const auth = await authenticateOwner(request, env);
+  if (!auth.ok) return auth.response;
 
   const url = new URL(request.url);
   const requestedLimit = Number.parseInt(url.searchParams.get("limit") || "48", 10);
@@ -132,7 +227,8 @@ const importGallery = async (request, env) => {
   if (request.method !== "POST") return methodNotAllowed("POST");
   const unavailable = galleryUnavailable(env);
   if (unavailable) return unavailable;
-  if (!(await isAdmin(request, env))) return jsonResponse({ error: "管理员口令不正确" }, 401);
+  const auth = await authenticateOwner(request, env);
+  if (!auth.ok) return auth.response;
 
   let payload;
   try {
@@ -177,8 +273,8 @@ const deleteGalleryImage = async (request, env) => {
   if (request.method !== "POST") return methodNotAllowed("POST");
   const unavailable = galleryUnavailable(env);
   if (unavailable) return unavailable;
-  if (!env.IMAGE_BUCKET) return jsonResponse({ error: "图片存储暂不可用" }, 503);
-  if (!(await isAdmin(request, env))) return jsonResponse({ error: "管理员口令不正确" }, 401);
+  const auth = await authenticateOwner(request, env);
+  if (!auth.ok) return auth.response;
 
   let payload;
   try {
@@ -239,7 +335,10 @@ const deleteGalleryImage = async (request, env) => {
 };
 
 const uploadToR2 = async (request, env) => {
-  if (!env.IMAGE_BUCKET) return jsonResponse({ success: false, error: "图片存储暂不可用" }, 503);
+  const unavailable = galleryUnavailable(env);
+  if (unavailable) return unavailable;
+  const auth = await authenticateOwner(request, env);
+  if (!auth.ok) return auth.response;
 
   let formData;
   try {
@@ -345,6 +444,18 @@ export default {
       return request.method === "POST"
         ? uploadToR2(request, env)
         : methodNotAllowed("POST");
+    }
+
+    if (pathname === "/api/auth/config") {
+      return getAuthConfig(request, env);
+    }
+
+    if (pathname === "/api/auth/signup") {
+      return signUpOwner(request, env);
+    }
+
+    if (pathname === "/api/auth/me") {
+      return getCurrentOwner(request, env);
     }
 
     if (pathname === "/api/gallery") {
