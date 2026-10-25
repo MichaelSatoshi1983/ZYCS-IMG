@@ -104,7 +104,9 @@ const signUpOwner = async (request, env) => {
   }
 
   try {
-    const supabaseResponse = await fetch(new URL("/auth/v1/signup", env.SUPABASE_URL), {
+    const signupUrl = new URL("/auth/v1/signup", env.SUPABASE_URL);
+    signupUrl.searchParams.set("redirect_to", "https://img.eth0.bond/login");
+    const supabaseResponse = await fetch(signupUrl, {
       method: "POST",
       headers: {
         apikey: env.SUPABASE_PUBLISHABLE_KEY,
