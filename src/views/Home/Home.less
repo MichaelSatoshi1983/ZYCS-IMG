@@ -1,13 +1,63 @@
 .Home {
   box-sizing: border-box;
   width: 100%;
+  padding-top: 1rem;
+
+  .intro {
+    margin-bottom: 1rem;
+
+    h1 {
+      margin: 0 0 0.35rem;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0;
+      color: #6b7280;
+      font-size: 0.875rem;
+      line-height: 1.5;
+    }
+  }
 
   .vh-tools {
     box-sizing: border-box;
-    padding-bottom: 1rem;
-    width: 100%;
-    height: max-content;
+    margin: 1rem 0;
     display: flex;
+    align-items: center;
     justify-content: space-between;
+    gap: 1rem;
+    color: #475569;
+    font-size: 0.875rem;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  button {
+    padding: 0.45rem 0.75rem;
+    color: #111827;
+    background: #f8fafc;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      background: #f1f5f9;
+    }
+
+    &:disabled {
+      color: #9ca3af;
+      cursor: not-allowed;
+    }
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .Home .vh-tools {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
